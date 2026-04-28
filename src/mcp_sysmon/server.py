@@ -37,7 +37,7 @@ def _format_uptime(seconds: float) -> str:
 
 
 @mcp.tool()
-def system_overview() -> str:
+def system_overview():
     """Get a full system overview: CPU, memory, swap, disk, and uptime."""
     cpu_percent = psutil.cpu_percent(interval=0.5)
     cpu_count = psutil.cpu_count()
@@ -92,7 +92,7 @@ def system_overview() -> str:
 
 
 @mcp.tool()
-def top_processes(sort_by: str = "memory", limit: int = 10) -> str:
+def top_processes(sort_by: str = "memory", limit: int = 10):
     """List top processes sorted by CPU or memory usage.
 
     Args:
@@ -144,7 +144,7 @@ def top_processes(sort_by: str = "memory", limit: int = 10) -> str:
 
 
 @mcp.tool()
-def disk_usage() -> str:
+def disk_usage():
     """Show detailed disk usage for all mounted partitions."""
     lines = [
         "## Disk Usage",
@@ -174,7 +174,7 @@ def disk_usage() -> str:
 
 
 @mcp.tool()
-def network_info() -> str:
+def network_info():
     """Show network interfaces, IP addresses, and I/O stats."""
     addrs = psutil.net_if_addrs()
     stats = psutil.net_if_stats()
@@ -205,7 +205,7 @@ def network_info() -> str:
 
 
 @mcp.tool()
-def find_process(name: str) -> str:
+def find_process(name: str):
     """Find processes by name (case-insensitive partial match).
 
     Args:
@@ -241,7 +241,7 @@ def find_process(name: str) -> str:
 
 
 @mcp.tool()
-def kill_process(pid: int, force: bool = False) -> str:
+def kill_process(pid: int, force: bool = False):
     """Kill a process by PID.
 
     Args:
