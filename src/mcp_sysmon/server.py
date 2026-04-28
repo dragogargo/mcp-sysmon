@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import signal
 import time
 from datetime import datetime, timezone
@@ -10,7 +9,16 @@ from datetime import datetime, timezone
 import psutil
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("mcp-sysmon")
+mcp = FastMCP(
+    "mcp-sysmon",
+    instructions=(
+        "System monitoring server for the local machine. "
+        "Provides read-only system metrics (CPU, memory, disk, network) and process management. "
+        "All tools except kill_process are safe, read-only operations with no side effects. "
+        "Use system_overview for a quick health check, then drill down with specialized tools. "
+        "Results are returned as Markdown tables and lists."
+    ),
+)
 
 
 def _format_bytes(n: int) -> str:
@@ -37,8 +45,19 @@ def _format_uptime(seconds: float) -> str:
 
 
 @mcp.tool()
-def system_overview():
-    """Get a full system overview: CPU, memory, swap, disk, and uptime."""
+def get_system_overview():
+    """Retrieve a full system health snapshot: CPU usage, core count, memory, swap, disk usage, and uptime.
+
+    Use this as the first tool when diagnosing system performance issues or answering
+    questions like "why is my machine slow?" or "how much disk space is left?".
+    For deeper investigation, follow up with get_top_processes, get_disk_usage, or get_network_info.
+
+    This is a read-only operation with no side effects. Takes ~0.5 seconds due to CPU sampling.
+
+    Returns a Markdown report with sections: CPU, Memory, Swap, and Disks.
+    Each section shows current usage as absolute values and percentages.
+    Disk partitions that require elevated privileges are silently skipped.
+    """
     cpu_percent = psutil.cpu_percent(interval=0.5)
     cpu_count = psutil.cpu_count()
     try:
@@ -92,12 +111,26 @@ def system_overview():
 
 
 @mcp.tool()
-def top_processes(sort_by: str = "memory", limit: int = 10):
-    """List top processes sorted by CPU or memory usage.
+def get_top_processes(sort_by: str = "memory", limit: int = 10):
+    """List the top resource-consuming processes sorted by CPU or memory usage.
+
+    Use this to identify which processes are consuming the most resources.
+    Use sort_by="memory" (default) to find memory hogs, or sort_by="cpu" to find
+    CPU-intensive processes. Use get_system_overview first for the big picture,
+    then this tool to drill down into specific processes.
+    To search for a specific process by name, use find_process instead.
+
+    This is a read-only operation with no side effects. When sorting by CPU,
+    takes ~0.5 seconds for accurate sampling; memory sorting is instant.
+
+    Returns a Markdown table with columns: PID, Name, CPU%, Mem%, RSS, Status.
+    Processes that exit during enumeration or require elevated access are skipped.
 
     Args:
-        sort_by: Sort by "cpu" or "memory" (default: memory).
-        limit: Number of processes to show (default: 10, max: 50).
+        sort_by: Sort criterion — "cpu" for CPU usage or "memory" for RAM usage.
+            Default: "memory". Any value other than "cpu" is treated as "memory".
+        limit: Maximum number of processes to return. Range: 1-50. Default: 10.
+            Values outside the range are clamped automatically.
     """
     limit = min(max(1, limit), 50)
     sort_key = "cpu_percent" if sort_by.lower() == "cpu" else "memory_percent"
@@ -144,8 +177,19 @@ def top_processes(sort_by: str = "memory", limit: int = 10):
 
 
 @mcp.tool()
-def disk_usage():
-    """Show detailed disk usage for all mounted partitions."""
+def get_disk_usage():
+    """Show detailed disk usage for all mounted partitions with I/O statistics.
+
+    Use this for disk space analysis — identifying full partitions, comparing
+    filesystem usage, or checking I/O throughput. For a quick disk summary as part
+    of overall system health, use get_system_overview instead.
+
+    This is a read-only operation with no side effects.
+
+    Returns a Markdown table with columns: Mount, Device, Total, Used, Free, Usage%, FS type.
+    Also includes cumulative disk I/O since boot (total bytes read/written).
+    Partitions requiring elevated privileges are silently skipped.
+    """
     lines = [
         "## Disk Usage",
         "",
@@ -174,8 +218,19 @@ def disk_usage():
 
 
 @mcp.tool()
-def network_info():
-    """Show network interfaces, IP addresses, and I/O stats."""
+def get_network_info():
+    """Show all network interfaces with IP addresses, link speed, status, and traffic counters.
+
+    Use this to check network connectivity, find the machine's IP addresses,
+    or investigate network throughput. Not suitable for packet-level analysis
+    or firewall rule inspection.
+
+    This is a read-only operation with no side effects.
+
+    Returns a Markdown report grouped by interface. Each interface shows:
+    UP/DOWN status, link speed in Mbps, IPv4/IPv6 addresses, and cumulative
+    bytes sent/received since boot. Loopback and virtual interfaces are included.
+    """
     addrs = psutil.net_if_addrs()
     stats = psutil.net_if_stats()
     io = psutil.net_io_counters(pernic=True)
@@ -206,10 +261,22 @@ def network_info():
 
 @mcp.tool()
 def find_process(name: str):
-    """Find processes by name (case-insensitive partial match).
+    """Search for running processes by name using case-insensitive partial matching.
+
+    Use this to locate specific processes — for example, find_process("chrome") returns
+    all Chrome-related processes. Use get_top_processes instead when you want to see the
+    highest resource consumers regardless of name. After finding a process, you can use
+    its PID with kill_process to terminate it.
+
+    This is a read-only operation with no side effects.
+
+    Returns a Markdown table with columns: PID, Name, CPU%, Mem%, RSS, User, Status.
+    Returns a plain text message if no processes match.
+    Processes that exit during enumeration or require elevated access are skipped.
 
     Args:
-        name: Process name or part of it to search for.
+        name: Process name or substring to search for. Matching is case-insensitive
+            and partial — "fire" matches "firefox", "Firewall", etc.
     """
     name_lower = name.lower()
     found: list[dict] = []
@@ -242,11 +309,26 @@ def find_process(name: str):
 
 @mcp.tool()
 def kill_process(pid: int, force: bool = False):
-    """Kill a process by PID.
+    """Terminate a process by its PID. This is a DESTRUCTIVE operation.
+
+    Use this only after identifying the target process with find_process or
+    get_top_processes. Always confirm the PID and process name with the user
+    before calling this tool. Killing system processes may cause instability.
+
+    Side effects: sends a signal to the target process.
+    - Default (force=False): sends SIGTERM, allowing the process to clean up gracefully.
+    - force=True: sends SIGKILL, immediately terminating the process without cleanup.
+    May require elevated privileges (sudo) for processes owned by other users.
+
+    Returns a confirmation message with the process name, or an error message
+    if the process does not exist or access is denied.
 
     Args:
-        pid: Process ID to kill.
-        force: If True, send SIGKILL instead of SIGTERM (default: False).
+        pid: The numeric process ID to terminate. Use find_process or
+            get_top_processes to discover valid PIDs.
+        force: If False (default), send SIGTERM for graceful shutdown.
+            If True, send SIGKILL for immediate termination — use only when
+            SIGTERM fails or the process is unresponsive.
     """
     try:
         p = psutil.Process(pid)
