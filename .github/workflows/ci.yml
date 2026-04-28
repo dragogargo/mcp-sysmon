@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check src/
+
+      - name: Type check
+        run: uv run pyright src/
+
+      - name: Test import and tools
+        run: |
+          uv run python -c "
+          from mcp_sysmon.server import (
+              get_system_overview,
+              get_top_processes,
+              get_disk_usage,
+              get_network_info,
+              find_process,
+          )
+          overview = get_system_overview()
+          assert '## System Overview' in overview
+          assert 'CPU' in overview
+          assert 'Memory' in overview
+
+          procs = get_top_processes(limit=3)
+          assert '| PID |' in procs
+
+          disk = get_disk_usage()
+          assert '## Disk Usage' in disk
+
+          net = get_network_info()
+          assert '## Network Interfaces' in net
+
+          result = find_process('python')
+          assert 'python' in result.lower()
+
+          print('All tools OK')
+          "

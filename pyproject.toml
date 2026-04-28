@@ -21,6 +21,12 @@ dependencies = [
 [project.scripts]
 mcp-sysmon = "mcp_sysmon.server:main"
 
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "pyright>=1.1.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
