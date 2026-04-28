@@ -346,6 +346,144 @@ def kill_process(pid: int, force: bool = False):
         return f"Access denied — cannot kill process {pid}. May need elevated privileges."
 
 
+@mcp.tool()
+def get_open_ports():
+    """List all listening TCP/UDP ports with the process that owns each one.
+
+    Use this to check what services are running and which ports are in use.
+    Helpful for debugging "port already in use" errors or checking if a
+    server is actually listening. For general network interface info, use
+    get_network_info instead.
+
+    This is a read-only operation with no side effects.
+
+    Returns a Markdown table with columns: Proto, Local Address, Port, PID, Process.
+    Only shows LISTEN (TCP) and bound (UDP) sockets. Connections requiring elevated
+    privileges show "N/A" for PID and process name.
+    """
+    try:
+        connections = psutil.net_connections(kind="inet")
+    except psutil.AccessDenied:
+        return "## Open Ports\n\nAccess denied — listing open ports requires elevated privileges on this OS."
+
+    listeners = []
+    for conn in connections:
+        if conn.status == "LISTEN" or (conn.type == 2 and conn.laddr):  # 2 = SOCK_DGRAM (UDP)
+            proto = "TCP" if conn.type == 1 else "UDP"
+            addr = conn.laddr.ip if conn.laddr else "N/A"
+            port = conn.laddr.port if conn.laddr else 0
+            pid = conn.pid
+            try:
+                proc_name = psutil.Process(pid).name() if pid else "N/A"
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                proc_name = "N/A"
+
+            listeners.append((proto, addr, port, pid or "N/A", proc_name))
+
+    listeners.sort(key=lambda x: (x[0], x[2]))
+
+    lines = [
+        f"## Open Ports ({len(listeners)} listening)",
+        "",
+        "| Proto | Address | Port | PID | Process |",
+        "|-------|---------|------|-----|---------|",
+    ]
+    for proto, addr, port, pid, proc_name in listeners:
+        lines.append(f"| {proto} | {addr} | {port} | {pid} | {proc_name} |")
+
+    if not listeners:
+        lines.append("| — | — | — | — | No listening ports found |")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_battery_status():
+    """Retrieve battery charge level, power source, and estimated time remaining.
+
+    Use this when the user asks about battery life, charging status, or power source.
+    Only available on laptops and devices with a battery. On desktops or VMs without
+    a battery, returns a message indicating no battery was detected.
+
+    This is a read-only operation with no side effects.
+
+    Returns a Markdown report with: charge percentage, plugged-in status,
+    estimated time remaining (if on battery), and a low-battery warning
+    when charge drops below 20%.
+    """
+    battery = psutil.sensors_battery()
+    if battery is None:
+        return "No battery detected — this is likely a desktop or virtual machine."
+
+    lines = [
+        "## Battery Status",
+        "",
+        f"- Charge: **{battery.percent:.0f}%**",
+        f"- Power source: **{'AC (plugged in)' if battery.power_plugged else 'Battery'}**",
+    ]
+
+    if not battery.power_plugged and battery.secsleft > 0:
+        lines.append(f"- Time remaining: {_format_uptime(battery.secsleft)}")
+
+    if battery.percent < 20 and not battery.power_plugged:
+        lines.append("")
+        lines.append("**Warning:** Battery below 20% — consider plugging in.")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_system_health():
+    """Run a quick health check and return warnings for any metrics outside normal ranges.
+
+    Use this as a fast diagnostic — it checks CPU, memory, swap, disk, and battery
+    and only reports problems. If everything is healthy, it says so.
+    Use get_system_overview for full metrics regardless of health status.
+
+    This is a read-only operation with no side effects. Takes ~0.5 seconds due to CPU sampling.
+
+    Returns a Markdown list of warnings (high CPU, low memory, full disk, etc.)
+    or a confirmation that all metrics are within normal ranges.
+    Each warning includes the current value and the threshold that was exceeded.
+    """
+    warnings: list[str] = []
+
+    cpu = psutil.cpu_percent(interval=0.5)
+    if cpu > 80:
+        warnings.append(f"- **CPU** usage is **{cpu}%** (threshold: 80%)")
+
+    mem = psutil.virtual_memory()
+    if mem.percent > 85:
+        warnings.append(f"- **Memory** usage is **{mem.percent}%** — {_format_bytes(mem.available)} available (threshold: 85%)")
+
+    swap = psutil.swap_memory()
+    if swap.total > 0 and swap.percent > 70:
+        warnings.append(f"- **Swap** usage is **{swap.percent}%** — may cause slowdowns (threshold: 70%)")
+
+    for part in psutil.disk_partitions():
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+            if usage.percent > 90:
+                warnings.append(f"- **Disk** `{part.mountpoint}` is **{usage.percent}%** full (threshold: 90%)")
+        except PermissionError:
+            continue
+
+    battery = psutil.sensors_battery()
+    if battery and battery.percent < 15 and not battery.power_plugged:
+        warnings.append(f"- **Battery** is at **{battery.percent}%** and not charging")
+
+    boot_time = psutil.boot_time()
+    uptime_days = (psutil.time.time() - boot_time) / 86400
+    if uptime_days > 14:
+        warnings.append(f"- **Uptime** is **{int(uptime_days)} days** — consider rebooting to clear memory leaks")
+
+    if not warnings:
+        return "## System Health: All OK\n\nAll metrics are within normal ranges."
+
+    lines = [f"## System Health: {len(warnings)} warning(s)", ""] + warnings
+    return "\n".join(lines)
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 
