@@ -473,7 +473,7 @@ def get_system_health():
         warnings.append(f"- **Battery** is at **{battery.percent}%** and not charging")
 
     boot_time = psutil.boot_time()
-    uptime_days = (psutil.time.time() - boot_time) / 86400
+    uptime_days = (time.time() - boot_time) / 86400
     if uptime_days > 14:
         warnings.append(f"- **Uptime** is **{int(uptime_days)} days** — consider rebooting to clear memory leaks")
 
